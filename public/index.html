@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EASYPRODUCT | Catálogo en Línea</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <a href="index.html" class="logo">🛍️ EASYPRODUCT</a>
+        <nav>
+            <div class="auth-nav" id="authNav"></div>
+            <button class="btn-cart" onclick="toggleCart()">
+                🛒 Carrito <span class="badge" id="cart-count">0</span>
+            </button>
+        </nav>
+    </header>
+
+    <main class="container">
+        <div class="filters">
+            <input type="text" id="searchInput" placeholder="Buscar productos por nombre o descripción..." oninput="filtrarProductos()">
+            <select id="categoryFilter" onchange="filtrarProductos()">
+                <option value="">Todas las categorías</option>
+            </select>
+        </div>
+
+        <div class="grid" id="productGrid">
+            <!-- Productos dinámicos -->
+        </div>
+    </main>
+
+    <!-- Carrito Lateral -->
+    <div class="overlay" id="overlay" onclick="toggleCart()"></div>
+    <aside class="drawer" id="cartDrawer">
+        <div class="drawer-header">
+            <h2>Tu Pedido</h2>
+            <button class="qty-btn" onclick="toggleCart()">✕</button>
+        </div>
+
+        <div class="cart-items" id="cartItems"></div>
+
+        <div class="drawer-footer">
+            <div style="display:flex; justify-content:space-between; font-size:1.2rem; font-weight:800; margin-bottom:0.5rem;">
+                <span>Total:</span>
+                <span id="cartTotal">$0.00</span>
+            </div>
+            <div class="checkout-form">
+                <input type="text" id="clienteNombre" placeholder="Tu nombre completo *" required>
+                <input type="tel" id="clienteTelefono" placeholder="Tu teléfono (opcional)">
+                <input type="text" id="clienteDireccion" placeholder="Dirección de entrega (opcional)">
+            </div>
+            <button class="btn btn-whatsapp" onclick="enviarPedidoWhatsApp()">
+                📲 Enviar Pedido por WhatsApp
+            </button>
+        </div>
+    </aside>
+
+    <script src="app.js"></script>
+</body>
+</html>

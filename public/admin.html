@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EASYPRODUCT | Panel administrativo</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="admin-page">
+    <header class="admin-header">
+        <a href="index.html" class="logo">⚙️ EASYPRODUCT <span>ADMIN</span></a>
+        <nav class="admin-header-actions">
+            <span id="adminUser" class="nav-user"></span>
+            <a href="index.html" class="btn btn-outline">Ver catálogo</a>
+            <button type="button" class="btn btn-outline" onclick="cerrarSesionAdmin()">Cerrar sesión</button>
+        </nav>
+    </header>
+
+    <main class="container admin-shell">
+        <section class="admin-intro">
+            <div>
+                <p class="eyebrow">CENTRO DE OPERACIONES</p>
+                <h1>Panel de administración</h1>
+                <p class="admin-subtitle">Resumen de ventas, inventario y pedidos de tu tienda.</p>
+            </div>
+            <div class="admin-updated"><span class="live-dot"></span> Datos actualizados en tiempo real</div>
+        </section>
+
+        <section class="stats-grid" aria-label="Métricas de la tienda">
+            <article class="stat-card stat-revenue">
+                <div class="stat-icon">💰</div>
+                <p class="stat-label">Ganancias totales</p>
+                <strong class="stat-value" id="statRevenue">$0.00</strong>
+                <span class="stat-detail">Pedidos confirmados y entregados</span>
+            </article>
+            <article class="stat-card stat-pending">
+                <div class="stat-icon">⏳</div>
+                <p class="stat-label">Ingresos pendientes</p>
+                <strong class="stat-value" id="statPendingRevenue">$0.00</strong>
+                <span class="stat-detail">Pedidos pendientes de confirmar</span>
+            </article>
+            <article class="stat-card stat-orders">
+                <div class="stat-icon">📦</div>
+                <p class="stat-label">Pedidos totales</p>
+                <strong class="stat-value" id="statOrders">0</strong>
+                <span class="stat-detail"><span id="statPendingOrders">0 pendientes</span><span class="stat-separator">·</span><span id="statCompletedOrders">0 completados</span></span>
+            </article>
+            <article class="stat-card stat-inventory">
+                <div class="stat-icon">🛍️</div>
+                <p class="stat-label">Productos activos</p>
+                <strong class="stat-value" id="statProducts">0</strong>
+                <span class="stat-detail"><span id="statCategories">0 categorías</span> activas</span>
+            </article>
+        </section>
+
+        <section class="admin-content panel">
+            <div class="admin-content-heading">
+                <div>
+                    <p class="eyebrow">GESTIÓN DE TIENDA</p>
+                    <h2>Tu negocio</h2>
+                </div>
+                <div class="admin-toolbar">
+                    <label class="admin-search">
+                        <span aria-hidden="true">⌕</span>
+                        <input type="search" id="productSearch" placeholder="Buscar productos..." aria-label="Buscar productos">
+                    </label>
+                    <button type="button" class="btn btn-outline" id="openCategoryModal">+ Nueva categoría</button>
+                    <button type="button" class="btn btn-primary" id="openProductModal">+ Nuevo producto</button>
+                </div>
+            </div>
+
+            <div class="admin-tabs" role="tablist" aria-label="Secciones de gestión">
+                <button type="button" class="admin-tab active" id="productsTab" role="tab" aria-selected="true" aria-controls="productsPanel">
+                    Inventario <span class="tab-count" id="productsCount">0</span>
+                </button>
+                <button type="button" class="admin-tab" id="ordersTab" role="tab" aria-selected="false" aria-controls="ordersPanel">
+                    Pedidos <span class="tab-count" id="ordersCount">0</span>
+                </button>
+            </div>
+
+            <section class="tab-panel" id="productsPanel" role="tabpanel" aria-labelledby="productsTab">
+                <div class="table-heading">
+                    <div>
+                        <h3>Inventario de productos</h3>
+                        <p>Administra disponibilidad, precios y detalles del catálogo.</p>
+                    </div>
+                    <label class="category-filter">
+                        <span class="sr-only">Filtrar por categoría</span>
+                        <select id="categoryFilter"><option value="">Todas las categorías</option></select>
+                    </label>
+                </div>
+                <div class="table-wrap">
+                    <table class="admin-table product-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Producto</th>
+                                <th scope="col">Categoría</th>
+                                <th scope="col">Precio</th>
+                                <th scope="col">Estado</th>
+                                <th scope="col" class="actions-heading">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminTableBody">
+                            <tr class="empty-row"><td class="table-empty" colspan="5">Cargando inventario...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="table-result-count" id="productResultCount"></p>
+            </section>
+
+            <section class="tab-panel" id="ordersPanel" role="tabpanel" aria-labelledby="ordersTab" hidden>
+                <div class="table-heading">
+                    <div>
+                        <h3>Pedidos recibidos</h3>
+                        <p>Consulta el detalle y actualiza el estado de cada pedido.</p>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table class="admin-table orders-table">
+                        <thead>
+                            <tr>
+                                <th scope="col"># Pedido</th>
+                                <th scope="col">Fecha y hora</th>
+                                <th scope="col">Cliente</th>
+                                <th scope="col">Productos</th>
+                                <th scope="col">Total</th>
+                                <th scope="col">Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ordersTableBody">
+                            <tr class="empty-row"><td class="table-empty" colspan="6">Cargando pedidos...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <dialog class="admin-modal" id="productModal" aria-labelledby="formTitle">
+        <div class="modal-header">
+            <div>
+                <p class="eyebrow">INVENTARIO</p>
+                <h2 id="formTitle">Nuevo producto</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal aria-label="Cerrar">×</button>
+        </div>
+        <form id="productForm" enctype="multipart/form-data">
+            <input type="hidden" id="productId">
+            <div class="product-form-layout">
+                <div class="product-form-fields">
+                    <div class="form-group">
+                        <label for="nombre">Nombre del producto *</label>
+                        <input type="text" id="nombre" maxlength="180" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="id_categoria">Categoría *</label>
+                        <select id="id_categoria" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="precio">Precio ($) *</label>
+                        <input type="number" id="precio" step="0.01" min="0" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="descripcion">Descripción</label>
+                        <textarea id="descripcion" rows="3" maxlength="1000" placeholder="Describe brevemente el producto"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="disponible">Disponibilidad</label>
+                        <select id="disponible">
+                            <option value="true">Disponible en catálogo</option>
+                            <option value="false">Oculto / agotado</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="image-upload">
+                    <label for="imagen">Imagen del producto</label>
+                    <div class="image-preview-frame">
+                        <img id="imagePreview" src="https://via.placeholder.com/480x360?text=Vista+previa" alt="Vista previa de la imagen del producto">
+                    </div>
+                    <input type="file" id="imagen" accept="image/*">
+                    <small>Al editar, deja el campo vacío para conservar la imagen actual.</small>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+                <button type="submit" class="btn btn-primary" id="btnSave">Guardar producto</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog class="admin-modal category-modal" id="categoryModal" aria-labelledby="categoryModalTitle">
+        <div class="modal-header">
+            <div>
+                <p class="eyebrow">CATÁLOGO</p>
+                <h2 id="categoryModalTitle">Nueva categoría</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal aria-label="Cerrar">×</button>
+        </div>
+        <form id="categoryForm">
+            <div class="form-group">
+                <label for="categoryName">Nombre de la categoría</label>
+                <input type="text" id="categoryName" maxlength="100" placeholder="Ej. Accesorios" required>
+            </div>
+            <p id="categoryMessage" class="category-message" role="status" aria-live="polite"></p>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+                <button type="submit" class="btn btn-primary" id="btnSaveCategory">Crear categoría</button>
+            </div>
+        </form>
+        <div class="category-list-block">
+            <h3>Categorías existentes</h3>
+            <ul id="categoryList" class="category-list"></ul>
+        </div>
+    </dialog>
+
+    <script src="admin.js"></script>
+</body>
+</html>
