@@ -14,23 +14,101 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Configuración de Cloudinary
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
+// ===== Cloudinary =====
+if (!process.env.CLOUDINARY_URL) {
+    cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+}
+
+const cloudinaryListo = Boolean(
+    process.env.CLOUDINARY_URL ||
+    (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET)
+);
+
+if (!cloudinaryListo) {
+    console.warn('Cloudinary no está configurado: no se podrán subir imágenes de productos.');
+}
+
+const IMAGEN_POR_DEFECTO = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300' viewBox='0 0 400 300'%3E%3Crect width='400' height='300' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='18' fill='%2364748b'%3ESin imagen%3C/text%3E%3C/svg%3E";
+const TIPOS_IMAGEN = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_IMAGEN = 5 * 1024 * 1024;
+
+// ===== Multer: en memoria, 1 imagen, máx. 5 MB, solo JPG/PNG/WEBP =====
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_IMAGEN, files: 1 },
+    fileFilter: (req, file, cb) =>
+        TIPOS_IMAGEN.includes(file.mimetype)
+            ? cb(null, true)
+            : cb(new Error('Solo se permiten imágenes JPG, PNG o WEBP'))
 });
 
-// Multer en memoria
-const upload = multer({ storage: multer.memoryStorage() });
+const recibirImagen = (req, res, next) => {
+    upload.single('imagen')(req, res, (err) => {
+        if (!err) return next();
+        const mensaje = err.code === 'LIMIT_FILE_SIZE'
+            ? 'La imagen no puede pasar de 5 MB'
+            : err.message;
+        res.status(400).json({ error: mensaje });
+    });
+};
 
-// Pool de conexión a MySQL Local
+const subirACloudinary = (fileBuffer) => new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+        {
+            folder: 'easyproduct',
+            resource_type: 'image',
+            transformation: [
+                { width: 1200, height: 1200, crop: 'limit' },
+                { quality: 'auto', fetch_format: 'auto' }
+            ]
+        },
+        (error, result) => (error ? reject(error) : resolve(result))
+    );
+    stream.end(fileBuffer);
+});
+
+const borrarImagen = async (publicId) => {
+    if (!publicId || !cloudinaryListo) return;
+    try {
+        await cloudinary.uploader.destroy(publicId);
+    } catch (e) {
+        console.warn('No se pudo borrar la imagen de Cloudinary:', publicId, e.message);
+    }
+};
+
+function leerProducto(body) {
+    const nombre = String(body.nombre || '').trim();
+    const descripcion = String(body.descripcion || '').trim().slice(0, 1000);
+    const precio = Number(body.precio);
+    const id_categoria = Number(body.id_categoria);
+
+    if (!nombre || nombre.length > 180) return { error: 'El nombre es obligatorio (máx. 180 caracteres)' };
+    if (!Number.isFinite(precio) || precio < 0 || precio > 1000000) return { error: 'El precio no es válido' };
+    if (!Number.isInteger(id_categoria) || id_categoria <= 0) return { error: 'Elige una categoría' };
+
+    return {
+        nombre,
+        descripcion,
+        precio,
+        id_categoria,
+        disponible: body.disponible === 'false' ? 0 : 1
+    };
+}
+
+// ===== Pool de conexión a MySQL en la nube (Aiven) =====
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT || 3306,
+    port: Number(process.env.DB_PORT) || 12425,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    database: process.env.DB_NAME || 'defaultdb',
+    ssl: {
+        rejectUnauthorized: false
+    },
     waitForConnections: true,
     connectionLimit: 10
 });
@@ -71,20 +149,6 @@ function requireAdmin(req, res, next) {
     }
     next();
 }
-
-// Función auxiliar para subir imagen a Cloudinary
-const subirACloudinary = (fileBuffer) => {
-    return new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-            { folder: 'easyproduct' },
-            (error, result) => {
-                if (error) reject(error);
-                else resolve(result);
-            }
-        );
-        stream.end(fileBuffer);
-    });
-};
 
 // ================= RUTAS API =================
 
@@ -143,12 +207,10 @@ app.get('/api/auth/me', authenticate, (req, res) => {
     res.json({ usuario: req.user });
 });
 
-// Obtener configuración pública (número de WhatsApp)
 app.get('/api/config', (req, res) => {
     res.json({ whatsapp: process.env.WHATSAPP_NUMBER || '50370000000' });
 });
 
-// Obtener categorías
 app.get('/api/categorias', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM categorias WHERE activo = TRUE');
@@ -171,8 +233,23 @@ app.post('/api/categorias', authenticate, requireAdmin, async (req, res) => {
     }
 });
 
-// 1. READ: Listar todos los productos con su categoría
+// 1. READ: Público (solo disponibles) y Admin (todos)
 app.get('/api/productos', async (req, res) => {
+    try {
+        const [rows] = await pool.query(`
+            SELECT p.*, c.nombre AS categoria_nombre 
+            FROM productos p
+            INNER JOIN categorias c ON p.id_categoria = c.id_categoria
+            WHERE p.disponible = TRUE
+            ORDER BY p.id_producto DESC
+        `);
+        res.json(rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/admin/productos', authenticate, requireAdmin, async (req, res) => {
     try {
         const [rows] = await pool.query(`
             SELECT p.*, c.nombre AS categoria_nombre 
@@ -187,62 +264,76 @@ app.get('/api/productos', async (req, res) => {
 });
 
 // 2. CREATE: Crear producto + subir imagen a Cloudinary
-app.post('/api/productos', authenticate, requireAdmin, upload.single('imagen'), async (req, res) => {
+app.post('/api/productos', authenticate, requireAdmin, recibirImagen, async (req, res) => {
+    let subida = null;
     try {
-        const { id_categoria, nombre, descripcion, precio, disponible } = req.body;
-        let imagen_url = req.body.imagen_url || 'https://via.placeholder.com/400x300?text=Sin+Imagen';
+        const p = leerProducto(req.body);
+        if (p.error) return res.status(400).json({ error: p.error });
+
+        let imagen_url = IMAGEN_POR_DEFECTO;
         let imagen_public_id = null;
 
-        if (req.file && process.env.CLOUDINARY_CLOUD_NAME !== 'tu_cloud_name') {
-            const uploadRes = await subirACloudinary(req.file.buffer);
-            imagen_url = uploadRes.secure_url;
-            imagen_public_id = uploadRes.public_id;
+        if (req.file) {
+            if (!cloudinaryListo) {
+                return res.status(503).json({ error: 'El almacenamiento de imágenes no está configurado en el servidor' });
+            }
+            subida = await subirACloudinary(req.file.buffer);
+            imagen_url = subida.secure_url;
+            imagen_public_id = subida.public_id;
         }
 
         const [result] = await pool.query(
             `INSERT INTO productos (id_categoria, nombre, descripcion, precio, imagen_url, imagen_public_id, disponible) 
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [id_categoria, nombre, descripcion, precio, imagen_url, imagen_public_id, disponible === 'false' ? 0 : 1]
+            [p.id_categoria, p.nombre, p.descripcion, p.precio, imagen_url, imagen_public_id, p.disponible]
         );
 
         res.status(201).json({ id_producto: result.insertId, message: 'Producto creado correctamente' });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Error al crear producto: ' + error.message });
+        if (subida) await borrarImagen(subida.public_id);
+        if (error.code === 'ER_NO_REFERENCED_ROW_2') return res.status(400).json({ error: 'La categoría no existe' });
+        console.error('Error al crear producto:', error);
+        res.status(500).json({ error: 'No se pudo crear el producto' });
     }
 });
 
 // 3. UPDATE: Actualizar producto
-app.put('/api/productos/:id', authenticate, requireAdmin, upload.single('imagen'), async (req, res) => {
+app.put('/api/productos/:id', authenticate, requireAdmin, recibirImagen, async (req, res) => {
+    let subida = null;
     try {
-        const { id } = req.params;
-        const { id_categoria, nombre, descripcion, precio, disponible } = req.body;
+        const p = leerProducto(req.body);
+        if (p.error) return res.status(400).json({ error: p.error });
 
-        const [actual] = await pool.query('SELECT * FROM productos WHERE id_producto = ?', [id]);
+        const [actual] = await pool.query('SELECT imagen_url, imagen_public_id FROM productos WHERE id_producto = ?', [req.params.id]);
         if (actual.length === 0) return res.status(404).json({ error: 'Producto no encontrado' });
 
         let imagen_url = actual[0].imagen_url;
         let imagen_public_id = actual[0].imagen_public_id;
+        const anterior = actual[0].imagen_public_id;
 
-        if (req.file && process.env.CLOUDINARY_CLOUD_NAME !== 'tu_cloud_name') {
-            if (imagen_public_id) {
-                await cloudinary.uploader.destroy(imagen_public_id).catch(() => {});
+        if (req.file) {
+            if (!cloudinaryListo) {
+                return res.status(503).json({ error: 'El almacenamiento de imágenes no está configurado en el servidor' });
             }
-            const uploadRes = await subirACloudinary(req.file.buffer);
-            imagen_url = uploadRes.secure_url;
-            imagen_public_id = uploadRes.public_id;
+            subida = await subirACloudinary(req.file.buffer);
+            imagen_url = subida.secure_url;
+            imagen_public_id = subida.public_id;
         }
 
         await pool.query(
             `UPDATE productos 
              SET id_categoria = ?, nombre = ?, descripcion = ?, precio = ?, imagen_url = ?, imagen_public_id = ?, disponible = ?
              WHERE id_producto = ?`,
-            [id_categoria, nombre, descripcion, precio, imagen_url, imagen_public_id, disponible === 'false' ? 0 : 1, id]
+            [p.id_categoria, p.nombre, p.descripcion, p.precio, imagen_url, imagen_public_id, p.disponible, req.params.id]
         );
 
+        if (subida) await borrarImagen(anterior);
         res.json({ message: 'Producto actualizado correctamente' });
     } catch (error) {
-        res.status(500).json({ error: 'Error al actualizar: ' + error.message });
+        if (subida) await borrarImagen(subida.public_id);
+        if (error.code === 'ER_NO_REFERENCED_ROW_2') return res.status(400).json({ error: 'La categoría no existe' });
+        console.error('Error al actualizar producto:', error);
+        res.status(500).json({ error: 'No se pudo actualizar el producto' });
     }
 });
 
@@ -280,21 +371,22 @@ app.get('/api/admin/stats', authenticate, requireAdmin, async (req, res) => {
 // 4. DELETE: Eliminar producto
 app.delete('/api/productos/:id', authenticate, requireAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
-        const [actual] = await pool.query('SELECT imagen_public_id FROM productos WHERE id_producto = ?', [id]);
-        
-        if (actual.length > 0 && actual[0].imagen_public_id && process.env.CLOUDINARY_CLOUD_NAME !== 'tu_cloud_name') {
-            await cloudinary.uploader.destroy(actual[0].imagen_public_id).catch(() => {});
-        }
+        const [actual] = await pool.query('SELECT imagen_public_id FROM productos WHERE id_producto = ?', [req.params.id]);
+        if (actual.length === 0) return res.status(404).json({ error: 'Producto no encontrado' });
 
-        await pool.query('DELETE FROM productos WHERE id_producto = ?', [id]);
+        await pool.query('DELETE FROM productos WHERE id_producto = ?', [req.params.id]);
+        await borrarImagen(actual[0].imagen_public_id);
         res.json({ message: 'Producto eliminado' });
     } catch (error) {
-        res.status(500).json({ error: 'No se puede eliminar (puede tener pedidos asociados): ' + error.message });
+        if (error.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(409).json({ error: 'No se puede eliminar: el producto tiene pedidos asociados. Mejor márcalo como «Oculto».' });
+        }
+        console.error('Error al eliminar producto:', error);
+        res.status(500).json({ error: 'No se pudo eliminar el producto' });
     }
 });
 
-// 5. PEDIDOS: Registrar pedido en MySQL antes de abrir WhatsApp
+// 5. PEDIDOS: Recalcula precios reales desde la BD en el servidor
 app.post('/api/pedidos', async (req, res) => {
     let conn;
     try {
@@ -313,7 +405,7 @@ app.post('/api/pedidos', async (req, res) => {
             if (usuario.rol !== 'cliente') return res.status(403).json({ error: 'Solo los clientes pueden asociar pedidos a su cuenta' });
         }
 
-        const { nombre_cliente, telefono_cliente, direccion_entrega, notas, items, total } = req.body;
+        const { nombre_cliente, telefono_cliente, direccion_entrega, notas, items } = req.body;
         if (!Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ error: 'El pedido debe incluir al menos un producto' });
         }
@@ -322,14 +414,57 @@ app.post('/api/pedidos', async (req, res) => {
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
+        const ids = [...new Set(items.map(i => Number(i.id_producto)))].filter(id => Number.isInteger(id) && id > 0);
+        if (ids.length === 0) {
+            await conn.rollback();
+            return res.status(400).json({ error: 'Productos inválidos en el pedido' });
+        }
+
+        const [productosDb] = await conn.query(
+            'SELECT id_producto, nombre, precio, disponible FROM productos WHERE id_producto IN (?)',
+            [ids]
+        );
+        const mapaProductos = new Map(productosDb.map(p => [p.id_producto, p]));
+
+        let totalCalculado = 0;
+        const itemsValidados = [];
+
+        for (const item of items) {
+            const prodDb = mapaProductos.get(Number(item.id_producto));
+            const cantidad = Number(item.cantidad);
+            if (!prodDb || !prodDb.disponible) {
+                await conn.rollback();
+                return res.status(400).json({ error: `El producto "${item.nombre || item.id_producto}" no está disponible` });
+            }
+            if (!Number.isInteger(cantidad) || cantidad <= 0 || cantidad > 100) {
+                await conn.rollback();
+                return res.status(400).json({ error: 'Cantidad inválida en el carrito' });
+            }
+            const precioReal = Number(prodDb.precio);
+            totalCalculado += precioReal * cantidad;
+            itemsValidados.push({
+                id_producto: prodDb.id_producto,
+                nombre: prodDb.nombre,
+                precio: precioReal,
+                cantidad
+            });
+        }
+
         const [pedidoRes] = await conn.query(
             `INSERT INTO pedidos (id_usuario, nombre_cliente, telefono_cliente, direccion_entrega, notas, total) 
              VALUES (?, ?, ?, ?, ?, ?)`,
-            [usuario ? usuario.id_usuario : null, usuario ? usuario.nombre : nombre_cliente, telefono_cliente || null, direccion_entrega || null, notas || null, total]
+            [
+                usuario ? usuario.id_usuario : null,
+                usuario ? usuario.nombre : String(nombre_cliente).trim(),
+                telefono_cliente ? String(telefono_cliente).trim() : null,
+                direccion_entrega ? String(direccion_entrega).trim() : null,
+                notas ? String(notas).trim() : null,
+                totalCalculado
+            ]
         );
         const id_pedido = pedidoRes.insertId;
 
-        for (const item of items) {
+        for (const item of itemsValidados) {
             await conn.query(
                 `INSERT INTO detalle_pedidos (id_pedido, id_producto, nombre_producto, precio_unitario, cantidad) 
                  VALUES (?, ?, ?, ?, ?)`,
@@ -345,7 +480,7 @@ app.post('/api/pedidos', async (req, res) => {
             return res.status(401).json({ error: 'Token inválido o expirado' });
         }
         console.error('Error al registrar pedido:', error);
-        res.status(500).json({ error: 'Error al registrar pedido: ' + error.message });
+        res.status(500).json({ error: 'Error al registrar pedido' });
     } finally {
         if (conn) conn.release();
     }
